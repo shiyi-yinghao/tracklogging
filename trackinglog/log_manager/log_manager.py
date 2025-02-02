@@ -14,6 +14,7 @@ from typing import Optional, Union, Any, Type, Callable, Tuple, Dict
 from line_profiler import LineProfiler
 from functools import wraps, update_wrapper, singledispatch
 from contextlib import redirect_stdout
+from collections import defaultdict as ddict
 from ..parameter_config import ParameterConfig
 from ..email_manager import EmailAgent
 
@@ -194,6 +195,12 @@ class LogManager:
         for method in logging_methods:
             setattr(logger, f'p{method}', print_and_log(getattr(logger, method), default_verbose=True))
             setattr(logger, method, print_and_log(getattr(logger, method), default_verbose=False))
+        
+        
+        # Placeholder for debugging msg rewrite after inherit merchanism
+        # logger._debugging_msg_dict = ddict(list)
+        logger._debugging_msg = []
+        setattr(logger, 'debugging_msg', lambda msg: logger._debugging_msg.append(msg))
 
         self.logger_dict[logname] = logger
         
@@ -250,7 +257,7 @@ class LogManager:
         """
         logger = self.get_logger(logname, filename=filename, folderpath=folderpath, log_level=log_level)
 
-        def trace_error_msg(self) -> str:
+        def trace_error_msg() -> str:
             """
             Extracts and formats the traceback of the last exception.
             Returns:
@@ -348,8 +355,14 @@ class LogManager:
                     except Exception as e:
                         logger.error(f"Uncatched Error: {e}", _log_system_msg="<LOG_MANAGER>")
                         logger.error(trace_error_msg(), _log_system_msg="<LOG_MANAGER>")
-                        profiler.disable()
-                        del profiler
+                        if logger._debugging_msg:
+                            logger.perror("------\nError Handling Suggestions: \n" + ";\n".join(logger._debugging_msg), _log_system_msg="<LOG_MANAGER>")
+                        if profiling_type == "line":
+                            try:
+                                profiler.disable()
+                                del profiler
+                            except:
+                                pass
                         raise
 
                     if verbose:
@@ -385,6 +398,8 @@ class LogManager:
                 except Exception as e:
                     logger.error(f"Uncatched Error: {e}", _log_system_msg="<LOG_MANAGER>")
                     logger.error(trace_error_msg(), _log_system_msg="<LOG_MANAGER>")
+                    if logger._debugging_msg:
+                            logger.perror("------\nError Handling Suggestions: \n" + ";\n".join(logger._debugging_msg), _log_system_msg="<LOG_MANAGER>")
                     raise
             return wrapper
         

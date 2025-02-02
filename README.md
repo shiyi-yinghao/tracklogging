@@ -33,6 +33,10 @@ https://pypi.org/project/trackinglog/
 
 0.1.6 Updated Log config to Parameter config. Added inline log usage.
 
+0.1.6.2 Fix several bugs.
+
+0.1.7 Add Error Handling message merchanism.
+
 ## Feature in developing
 
 Add public and private log
