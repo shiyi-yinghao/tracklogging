@@ -1,6 +1,9 @@
 import os
+import re
 from os.path import join as pjoin
 from typing import Optional, Union, Callable
+
+from trackinglog.task_manager import TaskMgtAgent
 
 class EmailCredential:
     __slots__ = ['_username', '_password', '_root_emails_folder']
@@ -33,9 +36,9 @@ class EmailCredential:
             username (str): The email username.
             password (str): The email password.
         """
-        self.root_emails_folder = email_root_folder
-        self.username = username if username is not None else self._username
-        self.password = password if password is not None else self._password
+        self._root_emails_folder = email_root_folder
+        self._username = username if username is not None else self._username
+        self._password = password if password is not None else self._password
 
     @property
     def username(self) -> str:
@@ -75,27 +78,28 @@ class LogConfig:
         self._cache_log_day_limit = None
         
         if isinstance(data, dict):
-            self.setup(
-                root_log_path=data.get('root_log_path', default_log_path),
-                cache_log_path=data.get('cache_log_path'),
-                cache_log_num_limit=data.get('cache_log_num_limit'),
-                cache_log_day_limit=data.get('cache_log_day_limit')
-            )
+            root_log_path = data.get('root_log_path', default_log_path)
+            cache_log_path = data.get('cache_log_path')
+            cache_log_num_limit = data.get('cache_log_num_limit', 20)
+            cache_log_day_limit = data.get('cache_log_day_limit', 7)
         else:
             # Assuming 'data' is an object with necessary attributes
-            assert hasattr(data, "root_log_path") and hasattr(data, "cache_log_path") and hasattr(data, "cache_log_num_limit") and hasattr(data, "cache_log_day_limit"), "Invalid data type for log config"
-            self.setup(
-                root_log_path=data.root_log_path if data.root_log_path is not None else default_log_path,
-                cache_log_path=data.cache_log_path,
-                cache_log_num_limit=data.cache_log_num_limit,
-                cache_log_day_limit=data.cache_log_day_limit
-            )
+            assert all(hasattr(data, attr) for attr in ["root_log_path", "cache_log_path", "cache_log_num_limit", "cache_log_day_limit"]), "Invalid data type for log config"
+            root_log_path = getattr(data, "root_log_path", default_log_path) or default_log_path
+            cache_log_path = getattr(data, "cache_log_path", None)
+            cache_log_num_limit = getattr(data, "cache_log_num_limit", 20)
+            cache_log_day_limit = getattr(data, "cache_log_day_limit", 7)
+
+        # Adjust cache_log_path if it's not absolute
+        cache_log_path = cache_log_path if cache_log_path and not cache_log_path.startswith(".") else os.path.abspath(pjoin(root_log_path, cache_log_path or "cache.log"))
+
+        self.setup(root_log_path, cache_log_path, cache_log_num_limit, cache_log_day_limit)
 
     def setup(self, root_log_path: str = 'logs', cache_log_path: Optional[str] = None, cache_log_num_limit: Optional[int] = None, cache_log_day_limit: Optional[int] = None) -> None:
-        self.root_log_path = root_log_path
-        self.cache_log_path = cache_log_path if cache_log_path is not None else pjoin(root_log_path, "cache")
-        self.cache_log_num_limit = cache_log_num_limit if cache_log_num_limit is not None else 100
-        self.cache_log_day_limit = cache_log_day_limit if cache_log_day_limit is not None else 7
+        self._root_log_path = root_log_path
+        self._cache_log_path = cache_log_path if cache_log_path is not None else pjoin(root_log_path, "cache")
+        self._cache_log_num_limit = cache_log_num_limit if cache_log_num_limit is not None else 100
+        self._cache_log_day_limit = cache_log_day_limit if cache_log_day_limit is not None else 7
 
     @property
     def root_log_path(self) -> str:
@@ -133,7 +137,6 @@ class LogConfig:
         return (f"LogConfig(root_log_path={self._root_log_path}, cache_log_path={self._cache_log_path}, "
                 f"cache_log_num_limit={self._cache_log_num_limit}, cache_log_day_limit={self._cache_log_day_limit})")
     
-
 class LockConfig:
     __slots__ = ['_lock_folder_path']
 
@@ -155,7 +158,7 @@ class LockConfig:
         Parameters:
             lock_folder_path (str): Path for lock file.
         """
-        self.lock_folder_path = lock_folder_path
+        self._lock_folder_path = lock_folder_path
 
     @property
     def lock_folder_path(self) -> str:
@@ -167,22 +170,31 @@ class LockConfig:
 
     def __repr__(self) -> str:
         return f"LockConfig(lock_folder_path={self._lock_folder_path})"
+    
 
 class ParameterConfig:
-    __slots__ = ['_root_task_path', '_log_config', '_email_credential', '_lock_config']
+    __slots__ = ['_root_folder_path', '_task_name', '_task_folder_path', '_log_config', '_email_credential', '_lock_config', '_task_config']
 
     def __init__(self) -> None:
         """
         Create a new ParameterConfig object with placholder values.
         """
-        self._root_task_path = None
+        self._root_folder_path = None
         self._log_config = None
         self._email_credential = None
         self._lock_config = None
 
     @property
-    def root_task_path(self) -> str:
-        return self._root_task_path
+    def root_folder_path(self) -> str:
+        return self._root_folder_path
+    
+    @property
+    def task_folder_path(self) -> str:
+        return self._task_name
+
+    @property
+    def task_name(self) -> str:
+        return self._task_name
 
     @property
     def email_credential(self) -> Optional[EmailCredential]:
@@ -194,34 +206,55 @@ class ParameterConfig:
     
     @property
     def lock_config(self) -> Optional[LockConfig]:
-        return self.lock_config
-
-    @root_task_path.setter
-    def root_task_path(self, value: str) -> None:
-        assert ParameterConfig.validate_and_create_path(value),  f"Invalid Cache Log Path Given: {value}"
-        self._root_task_path = value
+        return self._lock_config
     
+    @property
+    def task_config(self) -> Optional[LockConfig]:
+        return self._task_config
+
+    @root_folder_path.setter
+    def root_folder_path(self, value: str) -> None:
+        assert ParameterConfig.validate_and_create_path(value),  f"Invalid root_folder_path given: {value}"
+        self._root_folder_path = value
+
+    @task_folder_path.setter
+    def task_folder_path(self, value: str) -> None:
+        assert ParameterConfig.validate_and_create_path(value),  f"Invalid task_folder_path caused by invalid task name: {value}"
+        self._task_folder_path = value
+    
+    @task_name.setter
+    def task_name(self, value: str) -> None:
+        assert re.fullmatch(r"\w+", value),  f"Invalid task name Given, only allowed letters, digits and underscore: {value}"
+        self._task_name = value
+        self.task_folder_path = pjoin(self.root_folder_path, value)
+
     @email_credential.setter
     def email_credential(self, value: Optional[Union[Callable, dict]]) -> None:
-        self._email_credential = EmailCredential(value, pjoin(self._root_task_path, "emails"))
+        self._email_credential = EmailCredential(value, pjoin(self._task_folder_path, "emails"))
 
     @log_config.setter
     def log_config(self, value: Optional[Union[Callable, dict]]) -> None:
-        self._log_config = LogConfig(value, pjoin(self._root_task_path, "logs"))
+        self._log_config = LogConfig(value, pjoin(self._task_config._curr_task_folder_path, "logs"))
 
     @lock_config.setter
     def lock_config(self, value: Optional[Union[Callable, dict]]) -> None:
-        self._lock_config = LockConfig(value, pjoin(self._root_task_path, "locks"))
+        self._lock_config = LockConfig(value, pjoin(self._task_folder_path, "locks"))
+
+    @task_config.setter
+    def task_config(self, value: Optional[Union[Callable, dict]]) -> None:
+        self._task_config = TaskMgtAgent(self._task_folder_path, value)
     
-    def setup(self, root_task_path: str = 'logs', log_config: Optional[Union[Callable, dict]] = None, email_credential: Optional[Union[Callable, dict]] = None, lock_config: Optional[Union[Callable, dict]] = None) -> None:
+    def setup(self, task_name: str ="Default_Task", root_folder_path: str = './', task_config: Optional[Union[Callable, dict]] = None, log_config: Optional[Union[Callable, dict]] = None, email_credential: Optional[Union[Callable, dict]] = None, lock_config: Optional[Union[Callable, dict]] = None) -> None:
         """
         Setup the root logging path and initialize cache logging configuration.
         Parameters:
-            root_task_path (str): The root path where log files will be stored.
+            root_folder_path (str): The root path where log files will be stored.
             cache_log_limit (int): The limit on the number of cache log files.
             cache_log_days (int): The number of days to keep cache log files.
         """
-        self.root_task_path = root_task_path
+        self.root_folder_path = root_folder_path
+        self.task_name = task_name
+        self.task_config = task_config
         self.log_config = log_config  if log_config is not None else {}
         self.email_credential = email_credential if email_credential is not None else {}
         self.lock_config = lock_config if lock_config is not None else {}
@@ -229,18 +262,18 @@ class ParameterConfig:
 
 
     @staticmethod
-    def validate_and_create_path(root_task_path: str) -> bool:
+    def validate_and_create_path(root_folder_path: str) -> bool:
         """
         Validate and create the root log path if necessary.
         Parameters:
-            root_task_path (str): The path to validate and create if it does not exist.
+            root_folder_path (str): The path to validate and create if it does not exist.
         Returns:
             bool: True if the path is valid and accessible, False otherwise.
         """
-        if not root_task_path:
+        if not root_folder_path:
             return False
         try:
-            os.makedirs(root_task_path, exist_ok=True)
+            os.makedirs(root_folder_path, exist_ok=True)
         except Exception as e:
             print("Error during creating the folder.", e)
             return False
@@ -257,4 +290,4 @@ class ParameterConfig:
             raise ValueError("Invalid type for email credential")
 
     def __repr__(self) -> str:
-        return f"LogConfig(root_task_path={self._root_task_path}, log_config={self._log_config}, email_credential={self._email_credential})"
+        return f"LogConfig(root_folder_path={self._root_folder_path}, log_config={self._log_config}, email_credential={self._email_credential})"

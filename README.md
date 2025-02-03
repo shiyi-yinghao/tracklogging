@@ -37,6 +37,8 @@ https://pypi.org/project/trackinglog/
 
 0.1.7 Add Error Handling message merchanism.
 
+0.1.8 Embed Task Manager; Optimized cache log logic
+
 ## Feature in developing
 
 Add public and private log
@@ -44,6 +46,10 @@ Add public and private log
 Add Added email notification. 
 
 Add Kafka message notification
+
+Add Inherit Merchanism
+
+Add debug suggestion message
 
 
 ## Uaage for function and quick settings:

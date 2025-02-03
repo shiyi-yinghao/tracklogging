@@ -1,22 +1,25 @@
-import logging
 import os
-import types
-import atexit
-import datetime
-import inspect
-import time
-import traceback
-import psutil
-import sys
 import io
+import sys
+import time
+import copy
+import types
+import psutil
+import atexit
+import logging
+import inspect
+import datetime
+import traceback
 import pandas as pd
-from typing import Optional, Union, Any, Type, Callable, Tuple, Dict
-from line_profiler import LineProfiler
-from functools import wraps, update_wrapper, singledispatch
 from contextlib import redirect_stdout
+from line_profiler import LineProfiler
 from collections import defaultdict as ddict
-from ..parameter_config import ParameterConfig
-from ..email_manager import EmailAgent
+from functools import wraps, update_wrapper, singledispatch
+from typing import Optional, Union, Any, Type, Callable, Tuple, Dict
+
+from trackinglog.parameter_config import ParameterConfig
+from trackinglog.email_manager import EmailAgent
+from trackinglog.task_manager import TaskMgtAgent
 
 class LogManager:
     """
@@ -86,15 +89,14 @@ class LogManager:
         msg = ' '.join(modified_args)
         return msg
 
-    def cache_log_cleaner(self, cache_log_limit: Optional[int], cache_log_days: Optional[int]) -> None:
+    def cache_log_cleaner(self) -> None:
         """
         Clean up old log files based on the given limits for file number and age.
-        Parameters:
-            cache_log_limit (int): Maximum number of log files to retain.
-            cache_log_days (int): Maximum age of log files to retain (in days).
         """
         cache_log_dir = self.config.log_config.cache_log_path
-        
+        cache_log_limit = self.config.log_config.cache_log_num_limit
+        cache_log_days = self.config.log_config.cache_log_day_limit
+
         # Ensure the log directory exists
         if not os.path.exists(cache_log_dir):
             return
@@ -118,16 +120,16 @@ class LogManager:
         for file in files_to_delete:
             os.remove(file)
 
-    def create_cache_log(self, cache_log_limit: Optional[int], cache_log_days: Optional[int]) -> None:
+    def create_cache_log(self) -> None:
         """
         Set up cache logging by cleaning old logs and creating a new cache logger.
-        Parameters:
-            cache_log_limit (int): Maximum number of cache log files to retain.
-            cache_log_days (int): Maximum age of cache log files to retain (in days).
         """
-        self.cache_log_cleaner(cache_log_limit, cache_log_days)
-        self.create_logger("__cache", folderpath=self.config.log_config.cache_log_path)
-        
+        _cache_log_key = "_CACHE"
+        if _cache_log_key not in self.logger_dict:
+            self.cache_log_cleaner()
+            self.create_logger(_cache_log_key, folderpath=self.config.log_config.cache_log_path)
+        return _cache_log_key
+
     @setup_check
     def create_logger(self, logname: str, filename: Optional[str] = None, folderpath: Optional[str] = None, log_level: int = logging.DEBUG, timestamp: bool = True, formart_align: bool = True) -> None:
         """
@@ -201,7 +203,7 @@ class LogManager:
         # logger._debugging_msg_dict = ddict(list)
         logger._debugging_msg = []
         setattr(logger, 'debugging_msg', lambda msg: logger._debugging_msg.append(msg))
-
+        setattr(logger, 'folder', copy.deepcopy(self.config.task_config.folder_path_config))
         self.logger_dict[logname] = logger
         
         atexit.register(LogManager.close_log, logger, handler) 
@@ -218,7 +220,11 @@ class LogManager:
         Returns:
             logging.Logger: The requested logger.
         """
-        if logname not in self.logger_dict:
+        if logname is None:
+            logname = self.create_cache_log()
+        # elif logname=="_INHERIT":
+        #     self.create_cache_log(self, cache_log_limit: Optional[int], cache_log_days: Optional[int]) -> None:
+        elif logname not in self.logger_dict:
             self.create_logger(logname, filename, folderpath, log_level)
         
         logger = self.logger_dict[logname]
