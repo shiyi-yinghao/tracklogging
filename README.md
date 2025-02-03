@@ -72,6 +72,18 @@ my_function()  # Running the function will log start and end, using the specific
 
 ```
 
+## Comprehensive Config with Task Management setup
+```python
+
+trackinglog.logger.setup(task_name = "Tak1",
+                         root_folder_path='./tasks', 
+                         task_config={"task_num_limit":3, "task_expiration_date":3},
+                         log_config={'root_log_path':"./logs", '_cache_log_path':"./logs/cache", 'cache_log_num_limit':10, '_cache_log_day_limit':7},
+                         email_credential={'username':"PLACEHOLDER", 'password':"PLACEHOLDER",  'root_emails_folder':"./logs/emails"},
+                         lock_config={"lock_folder_path":"./logs/locks"})
+                         
+```
+
 ## Usage for class and comprehensive settings:
 ```python
 import logging
